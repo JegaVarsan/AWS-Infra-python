@@ -3,144 +3,138 @@ from botocore.exceptions import ClientError
 
 aws_region = 'us-east-1'
 
+ec2 = boto3.resource('ec2', region_name=aws_region)
 ec2_client = boto3.client('ec2', region_name=aws_region)
-ec2_resource = boto3.resource('ec2', region_name=aws_region)
+iam_client = boto3.client('iam', region_name=aws_region)
+logs_client = boto3.client('logs', region_name=aws_region)
+s3_client = boto3.client('s3', region_name=aws_region)
+
+# Specify the names of resources to delete
+vpc_name = 'my_vpc'
+security_group_name = 'WEB-ACCESS'
+instance_profile_name = 'EC2InstanceProfile'
+role_name = 'EC2S3UploadRole'
+log_group_name = '/aws/ec2/deployment'
+s3_bucket_name = 'boto-infra-creation-327658721'
+
+def get_vpc_by_name(name):
+    vpcs = ec2.vpcs.filter(Filters=[{'Name': 'tag:Name', 'Values': [name]}])
+    return list(vpcs)[0] if vpcs else None
+
+
+def delete_s3_bucket():
+    try:
+        response = s3_client.list_objects_v2(Bucket=s3_bucket_name)
+        objects = response.get('Contents', [])
+        if objects:
+            s3_client.delete_objects(
+                Bucket=s3_bucket_name,
+                Delete={'Objects': [{'Key': obj['Key']} for obj in objects]}
+            )
+            print(f"Deleted objects from S3 bucket: {s3_bucket_name}")
+
+        s3_client.delete_bucket(Bucket=s3_bucket_name)
+        print(f"S3 bucket '{s3_bucket_name}' deleted successfully.")
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchBucket':
+            print(f"S3 bucket '{s3_bucket_name}' not found.")
+        else:
+            print(f"Error deleting S3 bucket: {e}")
+
+def delete_instances(vpc):
+    instances = vpc.instances.all()
+    instance_ids = [instance.id for instance in instances]
+    if instance_ids:
+        print(f"Terminating instances: {instance_ids}")
+        ec2_client.terminate_instances(InstanceIds=instance_ids)
+        for instance in instances:
+            instance.wait_until_terminated()
+        print("Instances terminated.")
+
+def delete_security_groups(vpc):
+    security_groups = list(vpc.security_groups.all())
+    for sg in security_groups:
+        if sg.group_name != 'default':  # do not delete the default security group
+            print(f"Deleting security group: {sg.group_id}")
+            sg.delete()
+    print("Security groups deleted.")
+
+def delete_subnets(vpc):
+    subnets = list(vpc.subnets.all())
+    for subnet in subnets:
+        print(f"Deleting subnet: {subnet.id}")
+        subnet.delete()
+    print("Subnets deleted.")
+
+def delete_route_tables(vpc):
+    route_tables = list(vpc.route_tables.all())
+    for rt in route_tables:
+        if not rt.associations:  # Only delete route tables without associations
+            print(f"Deleting route table: {rt.id}")
+            rt.delete()
+    print("Route tables deleted.")
+
+def detach_internet_gateways(vpc):
+    igws = list(vpc.internet_gateways.all())
+    for igw in igws:
+        print(f"Detaching internet gateway: {igw.id}")
+        vpc.detach_internet_gateway(InternetGatewayId=igw.id)
+        igw.delete()
+    print("Internet gateways detached and deleted.")
+
+def delete_vpc(vpc):
+    print(f"Deleting VPC: {vpc.id}")
+    vpc.delete()
+    print("VPC deleted.")
+
+def delete_instance_profile(profile_name):
+    try:
+        print(f"Removing role from instance profile: {profile_name}")
+        iam_client.remove_role_from_instance_profile(
+            InstanceProfileName=profile_name,
+            RoleName=role_name
+        )
+        print(f"Deleting instance profile: {profile_name}")
+        iam_client.delete_instance_profile(InstanceProfileName=profile_name)
+        print("Instance profile deleted.")
+    except iam_client.exceptions.NoSuchEntityException:
+        print("Instance profile or role not found.")
+
+def delete_iam_role(role_name):
+    try:
+        print(f"Detaching policy from role: {role_name}")
+        policy_arn = 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+        iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
+        print(f"Deleting role: {role_name}")
+        iam_client.delete_role(RoleName=role_name)
+        print("IAM role deleted.")
+    except iam_client.exceptions.NoSuchEntityException:
+        print("Role or policy not found.")
+
+def delete_log_group(log_group_name):
+    try:
+        print(f"Deleting log group: {log_group_name}")
+        logs_client.delete_log_group(logGroupName=log_group_name)
+        print("Log group deleted.")
+    except logs_client.exceptions.ResourceNotFoundException:
+        print("Log group not found.")
 
 def main():
-    vpc_id = None
-    subnet_id = None
-    instance_id = None
-    security_group_id = None
-    internet_gateway_id = None
-    route_table_id = None
-    key_name = 'testing'
-
-    try:
-        # Get the VPC ID
-        vpcs = ec2_client.describe_vpcs(Filters=[{'Name': 'tag:Name', 'Values': ['my_vpc']}])
-        vpc_id = vpcs['Vpcs'][0]['VpcId'] if vpcs['Vpcs'] else None
-
-        # Get the subnet ID
-        if vpc_id:
-            subnets = ec2_client.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
-            subnet_id = subnets['Subnets'][0]['SubnetId'] if subnets['Subnets'] else None
-
-        # Get the instance ID
-        if subnet_id:
-            instances = ec2_client.describe_instances(Filters=[{'Name': 'subnet-id', 'Values': [subnet_id]}])
-            instance_id = instances['Reservations'][0]['Instances'][0]['InstanceId'] if instances['Reservations'] else None
-
-        # Get the security group ID
-        if vpc_id:
-            security_groups = ec2_client.describe_security_groups(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
-            security_group_id = security_groups['SecurityGroups'][0]['GroupId'] if security_groups['SecurityGroups'] else None
-
-        # Get the internet gateway ID
-        if vpc_id:
-            internet_gateways = ec2_client.describe_internet_gateways(Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}])
-            internet_gateway_id = internet_gateways['InternetGateways'][0]['InternetGatewayId'] if internet_gateways['InternetGateways'] else None
-
-        # Get the route table ID
-        if vpc_id:
-            route_tables = ec2_client.describe_route_tables(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])
-            route_table_id = route_tables['RouteTables'][0]['RouteTableId'] if route_tables['RouteTables'] else None
-
-    except ClientError as e:
-        print(f"Error retrieving resource IDs: {e}")
-        return
-
-    cleanup_resources(instance_id, key_name, security_group_id, subnet_id, route_table_id, internet_gateway_id, vpc_id)
-
-def cleanup_resources(instance_id, key_name, group_id, subnet_id, route_table_id, internet_gateway_id, vpc_id):
-    # Step 1: Terminate the EC2 instance
-    delete_ec2_instance(instance_id)
+    delete_instance_profile(instance_profile_name)
+    delete_iam_role(role_name)
+    delete_log_group(log_group_name)
     
-    # Step 2: Delete the security group
-    delete_security_group(group_id)
-    
-    # Step 3: Detach the internet gateway from the VPC
-    detach_internet_gateway(vpc_id, internet_gateway_id)
-    
-    # Step 4: Delete the internet gateway
-    delete_internet_gateway(internet_gateway_id)
-
-    # Step 6: Delete the subnet
-    delete_subnet(subnet_id)
-    
-    # Step 5: Delete the route table
-    delete_route_table(route_table_id)
-    
-    # Step 7: Delete the VPC
-    delete_vpc(vpc_id)
-    
-    # Step 8: Delete the key pair
-    delete_key_pair(key_name)
-
-def delete_ec2_instance(instance_id):
-    if instance_id:
-        try:
-            ec2_client.terminate_instances(InstanceIds=[instance_id])
-            print(f"Terminated instance: {instance_id}")
-            waiter = ec2_client.get_waiter('instance_terminated')
-            waiter.wait(InstanceIds=[instance_id])
-            print(f"Instance {instance_id} is terminated")
-        except ClientError as e:
-            print(f"Error terminating instance: {e}")
-
-def delete_key_pair(key_name):
-    try:
-        ec2_client.delete_key_pair(KeyName=key_name)
-        print(f"Deleted key pair: {key_name}")
-    except ClientError as e:
-        print(f"Error deleting key pair: {e}")
-
-def delete_security_group(group_id):
-    if group_id:
-        try:
-            ec2_client.delete_security_group(GroupId=group_id)
-            print(f"Deleted security group: {group_id}")
-        except ClientError as e:
-            print(f"Error deleting security group: {e}")
-
-def delete_subnet(subnet_id):
-    if subnet_id:
-        try:
-            ec2_client.delete_subnet(SubnetId=subnet_id)
-            print(f"Deleted subnet: {subnet_id}")
-        except ClientError as e:
-            print(f"Error deleting subnet: {e}")
-
-def delete_route_table(route_table_id):
-    if route_table_id:
-        try:
-            ec2_client.delete_route_table(RouteTableId=route_table_id)
-            print(f"Deleted route table: {route_table_id}")
-        except ClientError as e:
-            print(f"Error deleting route table: {e}")
-
-def detach_internet_gateway(vpc_id, internet_gateway_id):
-    if vpc_id and internet_gateway_id:
-        try:
-            ec2_client.detach_internet_gateway(InternetGatewayId=internet_gateway_id, VpcId=vpc_id)
-            print(f"Detached internet gateway: {internet_gateway_id} from VPC: {vpc_id}")
-        except ClientError as e:
-            print(f"Error detaching internet gateway: {e}")
-
-def delete_internet_gateway(internet_gateway_id):
-    if internet_gateway_id:
-        try:
-            ec2_client.delete_internet_gateway(InternetGatewayId=internet_gateway_id)
-            print(f"Deleted internet gateway: {internet_gateway_id}")
-        except ClientError as e:
-            print(f"Error deleting internet gateway: {e}")
-
-def delete_vpc(vpc_id):
-    if vpc_id:
-        try:
-            ec2_client.delete_vpc(VpcId=vpc_id)
-            print(f"Deleted VPC: {vpc_id}")
-        except ClientError as e:
-            print(f"Error deleting VPC: {e}")
+    vpc = get_vpc_by_name(vpc_name)
+    if vpc:
+        delete_instances(vpc)
+        delete_security_groups(vpc)
+        delete_subnets(vpc)
+        detach_internet_gateways(vpc)
+        delete_route_tables(vpc)
+        delete_vpc(vpc)
+        delete_s3_bucket()
+    else:
+        print(f"VPC {vpc_name} not found.")
 
 if __name__ == "__main__":
     main()
