@@ -103,7 +103,7 @@ def delete_instance_profile(profile_name):
 def delete_iam_role(role_name):
     try:
         print(f"Detaching policy from role: {role_name}")
-        policy_arn = 'arn:aws:iam::aws:policy/CloudWatchLogsFullAccess'
+        policy_arn =  'arn:aws:iam::aws:policy/AmazonS3FullAccess'
         iam_client.detach_role_policy(RoleName=role_name, PolicyArn=policy_arn)
         print(f"Deleting role: {role_name}")
         iam_client.delete_role(RoleName=role_name)

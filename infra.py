@@ -166,9 +166,6 @@ def main():
     aws s3 cp /tmp/deployment_status.txt s3://boto-infra-creation-327658721/deployment_status.txt
     '''
 
-# Make sure to replace `your-s3-bucket-name` with the actual name of your S3 bucket.
-
-
     # Create EC2 instance
     instances = ec2.create_instances(
         ImageId='ami-04a81a99f5ec58529',
