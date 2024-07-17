@@ -1,4 +1,3 @@
-
 import boto3
 from botocore.exceptions import ClientError
 import json
@@ -169,6 +168,32 @@ def main():
     # Check if npm start was successful
     sleep 30  # Wait for a bit to let npm start the application
     
+    sudo apt-get install -y awslogs
+
+    # Configure the CloudWatch Logs agent
+    sudo tee /etc/awslogs/awslogs.conf <<EOF
+    [general]
+    state_file = /var/lib/awslogs/agent-state
+
+    [/tmp/deployment_status]
+    file = /tmp/deployment_status.txt
+    log_group_name = {log_group_name}
+    log_stream_name = {log_stream_name}
+    datetime_format = %Y-%m-%d %H:%M:%S
+    EOF
+
+    # Configure CloudWatch Logs agent region
+    sudo tee /etc/awslogs/awscli.conf <<EOF
+    [plugins]
+    cwlogs = cwlogs
+    [default]   
+    region = us-east-1
+    EOF
+
+    # Start the CloudWatch Logs agent
+    sudo systemctl start awslogs
+    sudo systemctl enable awslogs
+
     if ps aux | grep -q '[n]pm start'; then
         echo "Application deployment succeeded" > /tmp/deployment_status.txt
     else
@@ -178,7 +203,7 @@ def main():
 
     # Upload deployment status to S3 bucket
     sudo snap install aws-cli --classic
-    aws s3 cp /tmp/deployment_status.txt s3://boto-infra-creation-327658721/deployment_status.txt
+    aws s3 cp /tmp/deployment_status.txt s3://{s3_bucket_name}/deployment_status.txt
     '''
 
     # Create EC2 instance
@@ -202,10 +227,10 @@ def main():
     print(f"EC2 instance created with ID: {instance_id}")
 
     # Wait for the instance to be ready
-    time.sleep(360)
+    time.sleep(180)
 
     # Get the deployment status from S3 and write to CloudWatch
-    response = s3_client.get_object(Bucket='boto-infra-creation-327658721', Key='deployment_status.txt')
+    response = s3_client.get_object(Bucket=s3_bucket_name, Key='deployment_status.txt')
     deployment_status = response['Body'].read().decode('utf-8')
 
     timestamp = int(time.time() * 1000)
