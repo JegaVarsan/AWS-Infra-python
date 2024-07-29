@@ -37,9 +37,9 @@ def create_s3_bucket(bucket_name):
     return bucket_name
 
 def main():
+    
     # Create S3 bucket if it doesn't exist
-    if not s3_client.list_buckets()['Buckets']:
-        create_s3_bucket(s3_bucket_name)
+    create_s3_bucket(s3_bucket_name)
 
     # Create VPC
     vpc = ec2.create_vpc(CidrBlock='10.0.0.0/24')
@@ -75,6 +75,12 @@ def main():
                 'IpProtocol': 'tcp',
                 'FromPort': 3000,
                 'ToPort': 3000,
+                'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
+            },
+            {
+                'IpProtocol': 'tcp',
+                'FromPort': 13000,
+                'ToPort': 13000,
                 'IpRanges': [{'CidrIp': '0.0.0.0/0'}]
             }
         ]
@@ -160,6 +166,9 @@ def main():
     sudo apt-get install -y nodejs npm
     sudo apt-get install -y awscli
     git clone https://github.com/JegaVarsan/Reactjs-Simple-Project.git /home/ubuntu/react-app
+    
+    export PORT=13000
+    
     cd /home/ubuntu/react-app
     npm install
 
@@ -177,7 +186,7 @@ def main():
     fi
 
     # Upload deployment status to S3 bucket
-    sudo snap install aws-cli --classic
+    snap install aws-cli --classic
     aws s3 cp /tmp/deployment_status.txt s3://boto-infra-creation-327658721/deployment_status.txt
     '''
 
@@ -202,7 +211,7 @@ def main():
     print(f"EC2 instance created with ID: {instance_id}")
 
     # Wait for the instance to be ready
-    time.sleep(360)
+    time.sleep(600)
 
     # Get the deployment status from S3 and write to CloudWatch
     response = s3_client.get_object(Bucket='boto-infra-creation-327658721', Key='deployment_status.txt')
@@ -220,8 +229,11 @@ def main():
         ]
     }
 
-    response = logs_client.put_log_events(**log_event)
-    print(f"Put log events response: {response}")
+    ress = logs_client.put_log_events(**log_event)
+    
+    print(deployment_status)
+    print()
+    print(deployment_status.splitlines()[0]) 
 
 if __name__ == "__main__":
     main()
